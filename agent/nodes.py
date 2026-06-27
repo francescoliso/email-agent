@@ -2,6 +2,7 @@ import json
 import logging
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import date
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langsmith import traceable
@@ -39,8 +40,9 @@ def fetch_emails(state: AgentState) -> AgentState:
 def _analyze_thread(thread: EmailThread) -> tuple:
     llm = _get_llm()
     try:
+        system = ANALYZE_SYSTEM.format(today=date.today().isoformat())
         response = llm.invoke([
-            SystemMessage(content=ANALYZE_SYSTEM),
+            SystemMessage(content=system),
             HumanMessage(content=_format_thread(thread)),
         ])
         parsed = _parse_json(response.content)
@@ -48,6 +50,9 @@ def _analyze_thread(thread: EmailThread) -> tuple:
             **thread,
             "needs_followup": bool(parsed.get("needs_followup", False)),
             "followup_reason": parsed.get("reason", ""),
+            "is_meeting_request": bool(parsed.get("is_meeting_request", False)),
+            "meeting_datetime": parsed.get("meeting_datetime", ""),
+            "meeting_event_url": "",
         }, None
     except Exception as e:
         return thread, f"analyze_emails[{thread['thread_id']}]: {e}"
@@ -97,6 +102,7 @@ def draft_followups(state: AgentState) -> AgentState:
         updated_threads.append(thread)
 
     return {**state, "threads": updated_threads, "errors": errors}
+
 
 
 @traceable(name="save_drafts")

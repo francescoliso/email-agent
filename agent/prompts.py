@@ -1,4 +1,4 @@
-ANALYZE_SYSTEM = """You are an email assistant. You will be given an email thread and must decide whether the recipient (the agent's user) needs to send a follow-up reply.
+ANALYZE_SYSTEM = """You are an email assistant. You will be given an email thread and must decide whether the recipient (the agent's user) needs to send a follow-up reply. Also detect if the email contains a meeting or call request.
 
 A follow-up is needed when:
 - Someone is waiting on a response, answer, or decision
@@ -12,11 +12,15 @@ A follow-up is NOT needed when:
 - The user already replied last in the thread
 - It's automated/no-reply mail
 
+Today's date is {today}.
+
 Respond with JSON only:
-{
+{{
   "needs_followup": true | false,
-  "reason": "<one sentence explaining why or why not>"
-}"""
+  "reason": "<one sentence explaining why or why not>",
+  "is_meeting_request": true | false,
+  "meeting_datetime": "<ISO 8601 datetime if is_meeting_request is true, else empty string>"
+}}"""
 
 DRAFT_SYSTEM = """You are an expert email writer. You will be given an email thread and a reason why a follow-up is needed.
 

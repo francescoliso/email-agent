@@ -15,6 +15,22 @@ logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)
 from agent.graph import graph
 from agent.state import AgentState
 import gmail.client as gmail_client
+import calendar_tool.client as calendar_client
+
+
+def _maybe_schedule_meeting(thread: dict) -> None:
+    if thread.get("is_meeting_request") and thread.get("meeting_datetime"):
+        try:
+            attendees = [p for p in thread["participants"] if "@" in p]
+            event_url = calendar_client.create_event(
+                summary=thread["subject"],
+                start_iso=thread["meeting_datetime"],
+                attendees=attendees,
+                description=f"Scheduled by email agent from thread: {thread['subject']}",
+            )
+            print(f"📅 Google Meet created: {event_url}")
+        except Exception as e:
+            print(f"⚠ Could not create calendar event: {e}")
 
 
 def review_and_send(drafts: list) -> None:
@@ -29,13 +45,17 @@ def review_and_send(drafts: list) -> None:
         print(f"\n[{i}/{len(drafts)}] Subject: {thread['subject']}")
         print(f"To: {thread['participants']}")
         print(f"Reason: {thread['followup_reason']}")
+        if thread.get("is_meeting_request"):
+            print(f"📅 Meeting request detected — event will be created on send")
         print(f"\n--- DRAFT ---\n{thread['draft_body']}\n-------------")
 
         while True:
-            choice = input("Action: [y] send / [e] edit / [n] skip  → ").strip().lower()
+            print("Action: [y] send / [e] edit / [n] skip", flush=True)
+            choice = input("→ ").strip().lower()
 
             if choice == "y":
                 gmail_client.send_draft(thread["draft_id"])
+                _maybe_schedule_meeting(thread)
                 print("✓ Sent.")
                 break
             elif choice == "e":
@@ -55,6 +75,12 @@ def review_and_send(drafts: list) -> None:
                     body=new_body,
                 )
                 gmail_client.send_draft(new_draft_id)
+                # Delete old draft only after the new one is successfully sent
+                try:
+                    gmail_client.delete_draft(thread["draft_id"])
+                except Exception:
+                    pass
+                _maybe_schedule_meeting(thread)
                 print("✓ Edited and sent.")
                 break
             elif choice == "n" or choice == "":

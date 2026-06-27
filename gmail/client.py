@@ -1,5 +1,6 @@
 import base64
 import email as email_lib
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -32,6 +33,11 @@ def _parse_headers(headers: list[dict]) -> dict[str, str]:
     return {h["name"].lower(): h["value"] for h in headers}
 
 
+def _extract_emails(header_value: str) -> list[str]:
+    """Extract bare email addresses from a header like 'Name <email>, Other <email2>'."""
+    return re.findall(r"[\w.+-]+@[\w.-]+\.\w+", header_value)
+
+
 def fetch_threads(days_back: int = 7) -> list[dict[str, Any]]:
     """Return email threads from the past `days_back` days, excluding sent/drafts/spam/trash."""
     service = _build_service()
@@ -50,7 +56,9 @@ def fetch_threads(days_back: int = 7) -> list[dict[str, Any]]:
         for msg in thread.get("messages", []):
             headers = _parse_headers(msg["payload"].get("headers", []))
             sender = headers.get("from", "")
-            participants.add(sender)
+            for field in ("from", "to", "cc"):
+                for addr in _extract_emails(headers.get(field, "")):
+                    participants.add(addr)
             messages.append({
                 "from": sender,
                 "date": headers.get("date", ""),
@@ -77,6 +85,12 @@ def send_draft(draft_id: str) -> None:
     """Send an existing draft by its draft ID."""
     service = _build_service()
     service.users().drafts().send(userId="me", body={"id": draft_id}).execute()
+
+
+def delete_draft(draft_id: str) -> None:
+    """Delete a draft by its draft ID."""
+    service = _build_service()
+    service.users().drafts().delete(userId="me", id=draft_id).execute()
 
 
 def create_draft(thread_id: str, to: str, subject: str, body: str) -> str:
