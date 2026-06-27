@@ -1,5 +1,7 @@
 import json
 import logging
+import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langsmith import traceable
@@ -34,30 +36,38 @@ def fetch_emails(state: AgentState) -> AgentState:
     return {**state, "threads": threads, "errors": errors}
 
 
+def _analyze_thread(thread: EmailThread) -> tuple:
+    llm = _get_llm()
+    try:
+        response = llm.invoke([
+            SystemMessage(content=ANALYZE_SYSTEM),
+            HumanMessage(content=_format_thread(thread)),
+        ])
+        parsed = _parse_json(response.content)
+        return {
+            **thread,
+            "needs_followup": bool(parsed.get("needs_followup", False)),
+            "followup_reason": parsed.get("reason", ""),
+        }, None
+    except Exception as e:
+        return thread, f"analyze_emails[{thread['thread_id']}]: {e}"
+
+
 @traceable(name="analyze_emails")
 def analyze_emails(state: AgentState) -> AgentState:
-    llm = _get_llm()
     errors = list(state.get("errors", []))
-    updated_threads: list[EmailThread] = []
+    results: dict[str, EmailThread] = {}
 
-    for thread in state["threads"]:
-        try:
-            thread_text = _format_thread(thread)
-            response = llm.invoke([
-                SystemMessage(content=ANALYZE_SYSTEM),
-                HumanMessage(content=thread_text),
-            ])
-            parsed = json.loads(response.content)
-            thread = {
-                **thread,
-                "needs_followup": bool(parsed.get("needs_followup", False)),
-                "followup_reason": parsed.get("reason", ""),
-            }
-        except Exception as e:
-            logger.error(f"analyze failed for thread {thread['thread_id']}: {e}")
-            errors.append(f"analyze_emails[{thread['thread_id']}]: {e}")
-        updated_threads.append(thread)
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(_analyze_thread, t): t["thread_id"] for t in state["threads"]}
+        for future in as_completed(futures):
+            thread, error = future.result()
+            results[thread["thread_id"]] = thread
+            if error:
+                logger.error(error)
+                errors.append(error)
 
+    updated_threads = [results[t["thread_id"]] for t in state["threads"]]
     flagged = sum(1 for t in updated_threads if t["needs_followup"])
     logger.info(f"Analysis complete: {flagged}/{len(updated_threads)} threads need follow-up")
     return {**state, "threads": updated_threads, "errors": errors}
@@ -155,6 +165,14 @@ def _format_thread(thread: EmailThread) -> str:
         lines.append(msg["body"].strip()[:2000])  # cap per-message size
         lines.append("---")
     return "\n".join(lines)
+
+
+def _parse_json(text: str) -> dict:
+    """Parse JSON from LLM response, stripping markdown code fences if present."""
+    text = text.strip()
+    text = re.sub(r"^```(?:json)?\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+    return json.loads(text.strip())
 
 
 def _pick_reply_to(thread: EmailThread) -> str:

@@ -36,7 +36,7 @@ def fetch_threads(days_back: int = 7) -> list[dict[str, Any]]:
     """Return email threads from the past `days_back` days, excluding sent/drafts/spam/trash."""
     service = _build_service()
     since = (datetime.now(timezone.utc) - timedelta(days=days_back)).strftime("%Y/%m/%d")
-    query = f"after:{since} -in:sent -in:drafts -in:spam -in:trash"
+    query = f"after:{since} category:primary -in:spam -in:trash"
 
     result = service.users().threads().list(userId="me", q=query).execute()
     thread_stubs = result.get("threads", [])
@@ -71,6 +71,12 @@ def fetch_threads(days_back: int = 7) -> list[dict[str, Any]]:
         })
 
     return threads
+
+
+def send_draft(draft_id: str) -> None:
+    """Send an existing draft by its draft ID."""
+    service = _build_service()
+    service.users().drafts().send(userId="me", body={"id": draft_id}).execute()
 
 
 def create_draft(thread_id: str, to: str, subject: str, body: str) -> str:
